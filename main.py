@@ -2,12 +2,12 @@ import os
 from pydantic import BaseModel
 from openai.types.responses import ResponseTextDeltaEvent
 from openai import AsyncOpenAI
-from agents import Agent , Runner , OpenAIChatCompletionsModel , ModelSettings , set_tracing_disabled , RunContextWrapper , RunConfig
+from agents import Agent, Runner, OpenAIChatCompletionsModel, ModelSettings, set_tracing_disabled, RunContextWrapper, RunConfig, ItemHelpers
 from dotenv import load_dotenv
 import asyncio
 from typing import Any
-load_dotenv()
 
+load_dotenv()
 
 Provider = AsyncOpenAI(
     api_key=os.getenv("GEMINI_API_KEY"),
@@ -23,15 +23,20 @@ model = OpenAIChatCompletionsModel(
 # # Structure Output
 # class CustomerSerciceAgent(BaseModel):
 #     """Customer Service Agent Output Structure"""
-
+#
 #     name : str
 #     about : str
 #     location : list[Any]
 
-
+# Uncomment and adjust the output model
+class CustomerServiceAgentOutput(BaseModel):
+    """Customer Service Agent Output Structure"""
+    name:     str
+    about:    str
+    location: list[Any]
 
 # (You must also have set up `model` and `Provider` somewhere above.
-#  For this example, I'm assuming `model` is already defined, 
+#  For this example, I'm assuming `model` is already defined,
 #  but if not, you can replace it with your chosen model name/string.)
 
 # 2. Define your Instructions model
@@ -69,7 +74,7 @@ I can also tell you about services in: {city_field}.
 """
 
 # 4. Create your single Agent, pointing its “instructions” to the function above
-service_Agent1 = Agent(
+service_Agent1 = Agent[Instructions](
     name="Customer Service Agent",
     instructions=my_instructions,   # ← dynamic instructions come from our function
     model=model,                    # ← whatever model string/object you use
@@ -77,6 +82,8 @@ service_Agent1 = Agent(
         temperature=0.7,
         max_tokens=150,
     ),
+    # enforce the structure of the final output
+    # final_output_as=CustomerServiceAgentOutput(raise_if_incorrect_type=True),
 )
 
 # 5. Disable tracing globally (since you had set_tracing_disabled(True))
@@ -87,7 +94,7 @@ async def customer_service_agent():
     # — Create a real Instructions object with initial values —
     context = Instructions(
         name=None,            # for example, give the agent a name right away
-        city=None,          # or leave as None if you want the user to set this later
+        city=None,            # or leave as None if you want the user to set this later
         about="food delivery"    # e.g. the “domain” you help with
     )
 
@@ -127,56 +134,71 @@ async def customer_service_agent():
         else:
             input_to_agent = user_input
 
-        # 6d. Call Runner.run(...) one time with this single agent
-        response = await Runner.run(
+        # 6d Call Runner.run(...) one time with this single agent
+        response =await Runner.run(
+
             starting_agent=service_Agent1,
             input=input_to_agent,
             context=context,               # pass our Instructions object here
             max_turns=3,                   # only let the agent “think” up to 3 internal steps
-            previous_response_id=previous_response_id
+            previous_response_id=previous_response_id,
         )
 
-        # 6e. Print the agent’s reply
-        print("Bot1:", response.final_output)
+        is_complete = response == True
+        current_agent = service_Agent1  # The agent you passed in Runner.run_streamed
+        current_turn = input_to_agent
 
-        # 6f. Update our history so next turn includes everything so far
-        history = response.to_input_list()
-        # previous_response_id = response.id
+    # print("=== Run complete ===")
+        # print(response)
+        print(f"Final Output:\n{response.final_output}")
+        print(f"Run completion status: {is_complete}")
+        print(f"Current Agent Name: {current_agent.name}")
+        print(f"Current Turn Input: {current_turn}")
 
-
-        # ✅ Check max turns
-        # if hasattr(response, "max_turns_exceeded") and response.max_turns_exceeded:
-        #     print("Max turns exceeded, exiting conversation.")
-        #     break
-
-        # # ✅ Save response ID (if exists)
-
-        # Second input from user (like choosing a pizza)
-        # sec_user_input = input("Enter Your A -> ")
-
-        # if sec_user_input.lower() == "exit":
-        #     print("Goodbye No!")
-        #     break
-
-        # # Build the follow-up input with history + your new answer
-        # follow_up_input = response.to_input_list() + [
-        #     {"role": "user", "content": sec_user_input}
-        # ]
-
-        # # Second agent responds (Bot2)
-        # response = await Runner.run(
-        #     starting_agent=service_Agent2,
-        #     input=follow_up_input,
-        #     context=context,
-        #     run_config=runConfig,
-        #     max_turns = 3 
-             
-        # )
-
-        # print("Bot2:", response.final_output, "\n\n\n")
+        # print("=== RunResultBase Components ===")
+        # print(f"Final Output:\n\n\n {response.final_output}")
+        # # Print completion status before the loop continues
+        # print(f"Run completion status: {response.is_complete}")
 
 
+        # async for event in result.stream_events():
+        # # We'll ignore the raw responses event deltas
+        #     if event.type == "raw_response_event":
+        #         continue
+        # # When the agent updates, print that
+        #     elif event.type == "agent_updated_stream_event":
+        #         print(f"Agent updated: {event.new_agent.name}")
+        #         continue
+            
+        #     # When items are generated, print them
+        #     elif event.type == "run_item_stream_event":
+        #         if event.item.type == "tool_call_item":
+        #             print("-- Tool was called")
+        #         elif event.item.type == "tool_call_output_item":
+        #             print(f"-- Tool output: {event.item.output}")
+        #         elif event.item.type == "message_output_item":
+        #             print(f"-- Message output:\n {ItemHelpers.text_message_output(event.item)}")
+        #         else:
+        #             pass  # Ignore other event types
 
+        
+        # Update history and previous response ID for next iteration
+        # history = response.to_input_list()
+        # previous_response_id = response.last_response_id
+        # print(f"Raw Responses:\n\n {response.raw_responses}")
+        # print(f"Last Agent:\n\n\n {response.last_agent.name if response.last_agent else 'None'}")
+        # print(f"To Input List:\n\n\n {response.to_input_list()}")
+        # print (f" Response Id \n\n\n:{response.last_response_id if response.last_response_id else 'None'}")
+
+        # # Check for ReasoningItem
+        # reasoning_found = False
+        # for item in response.to_input_list():
+        #     if hasattr(item, 'type') and item.type == 'reasoning':
+        #         reasoning_found = True
+        #         print(f"\nReasoningItem Detected:")
+        #         print(f"Reasoning: {item.content}")
+        # if not reasoning_found:
+        #     print("No ReasoningItem detected.")
 
     # async for event in response.stream_events():
     #     if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
@@ -186,8 +208,4 @@ async def customer_service_agent():
 # ✅ Main Runner
 if __name__ == "__main__":
     print("Starting Customer Service Agent...")
-    # try:
-    #     customer_service_agent()
-    # except KeyboardInterrupt:
-    #     print("\nExiting Customer Service Agent...")
     asyncio.run(customer_service_agent())
